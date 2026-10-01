@@ -9,8 +9,19 @@ android {
         applicationId = "com.example.cfscanner"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "2.0"
+    }
+    // Fixed signing key: every new build is signed the same, so updates install over the old app
+    signingConfigs {
+        getByName("debug") {
+            if (file("debug.keystore").exists()) {
+                storeFile = file("debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
