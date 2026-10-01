@@ -1,9 +1,12 @@
 name: Build APK
+
 on:
   push:
   workflow_dispatch:
+
 permissions:
   contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,10 +26,17 @@ jobs:
       - name: Version
         id: ver
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"; else echo "v=2.0" >> "$GITHUB_OUTPUT"; fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "v=3.0" >> "$GITHUB_OUTPUT"
+          fi
       - name: Arrange project
         run: bash arrange.sh
-      - run: gradle assembleDebug --no-daemon -PappVersion=${{ steps.ver.outputs.v }} -PappCode=${{ github.run_number }}
+      - name: Download and verify Xray Android binaries
+        run: bash scripts/fetch_xray.sh
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon -PappVersion=${{ steps.ver.outputs.v }} -PappCode=${{ github.run_number }}
       - uses: actions/upload-artifact@v4
         with:
           name: Parvane-Scanner-APK
@@ -39,4 +49,3 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk "Parvane-Scanner-${GITHUB_REF_NAME}.apk"
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "Parvane Scanner $GITHUB_REF_NAME"
           gh release upload "$GITHUB_REF_NAME" "Parvane-Scanner-${GITHUB_REF_NAME}.apk" --clobber
-          
