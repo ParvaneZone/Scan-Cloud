@@ -9,8 +9,8 @@ android {
         applicationId = "com.example.cfscanner"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = (project.findProperty("appCode") as String?)?.toIntOrNull() ?: 2
+        versionName = (project.findProperty("appVersion") as String?) ?: "2.0"
     }
     // Fixed signing key: every new build is signed the same, so updates install over the old app
     signingConfigs {

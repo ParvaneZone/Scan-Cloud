@@ -1,8 +1,13 @@
 package com.example.cfscanner
 
+import android.app.DownloadManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -22,6 +27,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
@@ -34,6 +45,7 @@ import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.ByteString
+import org.json.JSONObject
 import okio.ByteString.Companion.toByteString
 import java.io.ByteArrayOutputStream
 import java.net.InetAddress
@@ -52,12 +64,20 @@ import kotlin.random.Random
 
 const val CHANNEL = "https://t.me/ParvaneZone"
 const val DEV = "https://t.me/Parv49e"
+const val RELEASES_API = "https://api.github.com/repos/ParvaneZone/Scan-Cloud/releases/latest"
 
 val CF_RANGES = listOf(
     "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
     "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
     "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
     "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22"
+)
+// Fallback lists; the app tries to download the official up-to-date lists first
+val FASTLY_RANGES = listOf(
+    "23.235.32.0/20", "43.249.72.0/22", "103.244.50.0/24", "103.245.222.0/23", "103.245.224.0/24",
+    "104.156.80.0/20", "140.248.64.0/18", "140.248.128.0/17", "146.75.0.0/17", "151.101.0.0/16",
+    "157.52.64.0/18", "167.82.0.0/17", "167.82.128.0/20", "167.82.160.0/20", "167.82.224.0/20",
+    "172.111.64.0/18", "185.31.16.0/22", "199.27.72.0/21", "199.232.0.0/16"
 )
 val HTTPS_PORTS = listOf(443, 2053, 2083, 2087, 2096, 8443)
 val HTTP_PORTS = listOf(80, 8080, 8880, 2052, 2082, 2086, 2095)
@@ -93,7 +113,7 @@ val S = mapOf(
     "found" to ("Results" to "نتایج"),
     "save_ips" to ("Save IPs file" to "ذخیرهٔ فایل IPها"),
     "save_cfgs" to ("Save all configs file" to "ذخیرهٔ فایل همهٔ کانفیگ‌ها"),
-    "tab_cf" to ("Cloudflare" to "کلودفلر"),
+    "tab_cf" to ("IP Scan" to "اسکن IP"),
     "tab_sni" to ("SNI" to "SNI"),
     "tab_about" to ("About" to "درباره ما"),
     "sni_title" to ("SNI / Target Scanner" to "اسکنر SNI / تارگت"),
@@ -119,6 +139,17 @@ val S = mapOf(
         "• نتایج به اپراتور، زمان و شرایط شبکهٔ شما بستگی دارد و تضمینی نیست.\n" +
         "• لطفاً مسئولانه و طبق قوانین کشور خود استفاده کنید.\n\n" +
         "برای پیشنهاد یا گزارش مشکل، با دکمهٔ زیر به سازنده پیام بدهید."),
+    "check_update" to ("Check for updates" to "بررسی آپدیت"),
+    "checking" to ("Checking..." to "در حال بررسی..."),
+    "upd_none" to ("You have the latest version." to "شما آخرین نسخه را دارید."),
+    "upd_new" to ("New version available:" to "نسخهٔ جدید موجود است:"),
+    "upd_err" to ("Could not check for updates. Check your internet." to "بررسی آپدیت انجام نشد. اینترنت خود را چک کنید."),
+    "upd_noapk" to ("A new version exists but it has no APK file yet." to "نسخهٔ جدید هست ولی هنوز فایل APK ندارد."),
+    "update" to ("Update" to "آپدیت"),
+    "downloading" to ("Downloading... the installer opens when it finishes." to "در حال دانلود... بعد از پایان، نصب‌کننده باز می‌شود."),
+    "allow_install" to ("Allow this app to install updates in the settings that just opened, then press Update again." to "در تنظیماتی که باز شد اجازهٔ نصب آپدیت را بدهید و دوباره آپدیت را بزنید."),
+    "ok" to ("OK" to "باشه"),
+    "provider" to ("Network" to "شبکه"),
     "channel" to ("Telegram channel" to "کانال تلگرام"),
     "contact" to ("Message the developer on Telegram" to "پیام به سازنده در تلگرام")
 )
@@ -142,27 +173,44 @@ fun tcpPing(ip: String, port: Int, timeoutMs: Int): Long? = try {
     (System.nanoTime() - t) / 1_000_000
 } catch (e: Exception) { null }
 
-fun speedTest(ip: String, port: Int): Double? = try {
+fun speedTest(ip: String, port: Int, provider: Int): Double? = try {
     val https = port in HTTPS_PORTS
     val addr = InetAddress.getByName(ip)
     val client = OkHttpClient.Builder()
         .dns(object : Dns { override fun lookup(hostname: String) = listOf(addr) })
         .followRedirects(false)
         .connectTimeout(3, TimeUnit.SECONDS).readTimeout(6, TimeUnit.SECONDS).build()
-    val url = "${if (https) "https" else "http"}://speed.cloudflare.com:$port/__down?bytes=3000000"
+    val target = if (provider == 0) "speed.cloudflare.com" to "/__down?bytes=3000000"
+                 else "files.pythonhosted.org" to "/packages/source/p/pip/pip-24.0.tar.gz"
+    val url = "${if (https) "https" else "http"}://${target.first}:$port${target.second}"
     val t = System.nanoTime()
     var total = 0L
     client.newCall(Request.Builder().url(url).build()).execute().use { r ->
         if (!r.isSuccessful) return@use
         val s = r.body!!.byteStream(); val buf = ByteArray(16384)
-        while (true) { val n = s.read(buf); if (n < 0) break; total += n }
+        while (total < 3_000_000) { val n = s.read(buf); if (n < 0) break; total += n }
     }
     val sec = (System.nanoTime() - t) / 1e9
-    if (total == 0L) null else total * 8 / 1e6 / sec
+    if (total < 50_000) null else total * 8 / 1e6 / sec
 } catch (e: Exception) { null }
 
-suspend fun scan(port: Int, perRange: Int, status: (String) -> Unit): List<Result> = coroutineScope {
-    val ips = CF_RANGES.flatMap { randomIps(it, perRange) }
+// provider 0 = Cloudflare, 1 = Fastly. Downloads the official range list, falls back to the built-in one.
+fun liveRanges(provider: Int): List<String> {
+    val fallback = if (provider == 0) CF_RANGES else FASTLY_RANGES
+    return try {
+        val c = OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).readTimeout(5, TimeUnit.SECONDS).build()
+        val url = if (provider == 0) "https://www.cloudflare.com/ips-v4" else "https://api.fastly.com/public-ip-list"
+        val body = c.newCall(Request.Builder().url(url).build()).execute().use { it.body!!.string() }
+        val list = if (provider == 0) body.lines().map { it.trim() }
+                   else JSONObject(body).getJSONArray("addresses").let { a -> List(a.length()) { a.getString(it) } }
+        list.filter { Regex("""\d+\.\d+\.\d+\.\d+/\d+""").matches(it) }.ifEmpty { fallback }
+    } catch (e: Exception) { fallback }
+}
+
+suspend fun scan(provider: Int, port: Int, perRange: Int, status: (String) -> Unit): List<Result> = coroutineScope {
+    status("Loading ranges...")
+    val ranges = withContext(Dispatchers.IO) { liveRanges(provider) }
+    val ips = ranges.flatMap { randomIps(it, perRange) }.distinct()
     val done = AtomicInteger(0)
     val sem = Semaphore(150)
     val alive = ips.map { ip ->
@@ -177,9 +225,36 @@ suspend fun scan(port: Int, perRange: Int, status: (String) -> Unit): List<Resul
     val out = mutableListOf<Result>()
     alive.take(20).forEachIndexed { i, (ip, ping) ->
         status("Speed: ${i + 1}/20")
-        out += Result(ip, ping, withContext(Dispatchers.IO) { speedTest(ip, port) })
+        out += Result(ip, ping, withContext(Dispatchers.IO) { speedTest(ip, port, provider) })
     }
     out + alive.drop(20).map { Result(it.first, it.second, null) }
+}
+
+// ---------- Update check (GitHub releases) ----------
+fun fetchLatest(): Pair<String, String?>? = try {
+    val c = OkHttpClient.Builder().connectTimeout(6, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS).build()
+    c.newCall(Request.Builder().url(RELEASES_API).header("Accept", "application/vnd.github+json").build()).execute().use { r ->
+        if (!r.isSuccessful) null else {
+            val j = JSONObject(r.body!!.string())
+            val assets = j.optJSONArray("assets")
+            var apk: String? = null
+            if (assets != null) for (i in 0 until assets.length()) {
+                val u = assets.getJSONObject(i).optString("browser_download_url")
+                if (u.endsWith(".apk")) { apk = u; break }
+            }
+            j.getString("tag_name") to apk
+        }
+    }
+} catch (e: Exception) { null }
+
+fun isNewer(remote: String, local: String): Boolean {
+    fun parts(v: String) = v.trim().removePrefix("v").split(".").map { it.takeWhile { c -> c.isDigit() }.toIntOrNull() ?: 0 }
+    val a = parts(remote); val b = parts(local)
+    for (i in 0 until maxOf(a.size, b.size)) {
+        val x = a.getOrElse(i) { 0 }; val y = b.getOrElse(i) { 0 }
+        if (x != y) return x > y
+    }
+    return false
 }
 
 // ---------- Config test ----------
@@ -348,6 +423,27 @@ suspend fun scanSni(hosts: List<String>, status: (String) -> Unit): List<SniRes>
         .sortedWith(compareByDescending<SniRes> { it.h2 && it.tls13 }.thenBy { it.pingMs + it.totalMs })
 }
 
+// ---------- Icons (SVG path data drawn as vectors) ----------
+fun svgIcon(vararg d: String): ImageVector {
+    val b = ImageVector.Builder("icon", 24.dp, 24.dp, 24f, 24f)
+    try {
+        d.forEach {
+            b.addPath(PathParser().parsePathString(it).toNodes(), stroke = SolidColor(Color.Black),
+                strokeLineWidth = 2f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round)
+        }
+    } catch (e: Exception) { }
+    return b.build()
+}
+val CIRCLE = "M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20z"
+val IconMenu by lazy { svgIcon("M3 12h18", "M3 6h18", "M3 18h18") }
+val IconCloud by lazy { svgIcon("M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z") }
+val IconGlobe by lazy { svgIcon(CIRCLE, "M2 12h20", "M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z") }
+val IconInfo by lazy { svgIcon(CIRCLE, "M12 16v-4", "M12 8h.01") }
+val IconRefresh by lazy { svgIcon("M23 4v6h-6", "M1 20v-6h6", "M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15") }
+val IconSend by lazy { svgIcon("M22 2L11 13", "M22 2l-7 20-4-9-9-4 20-7z") }
+val IconUsers by lazy { svgIcon("M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2", "M9 3a4 4 0 1 0 0 8a4 4 0 1 0 0-8z", "M23 21v-2a4 4 0 0 0-3-3.87", "M16 3.13a4 4 0 0 1 0 7.75") }
+val IconDownload by lazy { svgIcon("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "M7 10l5 5 5-5", "M12 15V3") }
+
 // ---------- UI ----------
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -381,37 +477,100 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun Header(title: String, fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            Image(painterResource(R.drawable.logo), null, Modifier.size(38.dp).clip(RoundedCornerShape(8.dp)))
-            Spacer(Modifier.width(8.dp))
-            Text(title, style = MaterialTheme.typography.titleSmall)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(tr("dark", fa)); Spacer(Modifier.width(4.dp)); Switch(dark, onDark)
-            TextButton({ onFa(!fa) }) { Text(if (fa) "English" else "فارسی") }
+fun ScannerScreen(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean) -> Unit) {
+    fun t(k: String) = tr(k, fa)
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val uri = LocalUriHandler.current
+    var tab by remember { mutableStateOf(0) }
+    var menu by remember { mutableStateOf(false) }
+    var updMsg by remember { mutableStateOf("") }
+    var updUrl by remember { mutableStateOf<String?>(null) }
+    val cur = remember { try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "0" } catch (e: Exception) { "0" } }
+
+    fun checkUpdate() {
+        updMsg = t("checking"); updUrl = null
+        scope.launch {
+            val r = withContext(Dispatchers.IO) { fetchLatest() }
+            if (r == null) updMsg = t("upd_err")
+            else if (!isNewer(r.first, cur)) updMsg = t("upd_none")
+            else if (r.second == null) updMsg = t("upd_noapk")
+            else { updMsg = "${t("upd_new")} ${r.first}"; updUrl = r.second }
         }
     }
-}
+    fun startUpdate(url: String) {
+        if (Build.VERSION.SDK_INT >= 26 && !ctx.packageManager.canRequestPackageInstalls()) {
+            updMsg = t("allow_install"); updUrl = null
+            ctx.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${ctx.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return
+        }
+        updMsg = t("downloading"); updUrl = null
+        scope.launch {
+            try {
+                val dm = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                val id = dm.enqueue(DownloadManager.Request(Uri.parse(url)).setTitle("Parvane Scanner")
+                    .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                    .setDestinationInExternalFilesDir(ctx, Environment.DIRECTORY_DOWNLOADS, "update-${System.currentTimeMillis()}.apk"))
+                while (true) {
+                    val st = dm.query(DownloadManager.Query().setFilterById(id)).use { c ->
+                        if (c.moveToFirst()) c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) else DownloadManager.STATUS_FAILED
+                    }
+                    if (st == DownloadManager.STATUS_SUCCESSFUL) {
+                        ctx.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(dm.getUriForDownloadedFile(id), "application/vnd.android.package-archive")
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+                        updMsg = ""; return@launch
+                    }
+                    if (st == DownloadManager.STATUS_FAILED) throw Exception("failed")
+                    delay(800)
+                }
+            } catch (e: Exception) { updMsg = ""; uri.openUri(url) }
+        }
+    }
 
-@Composable
-fun ScannerScreen(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean) -> Unit) {
-    var tab by remember { mutableStateOf(0) }
-    Scaffold(bottomBar = {
-        NavigationBar {
-            listOf("☁️" to "tab_cf", "🌐" to "tab_sni", "ℹ️" to "tab_about").forEachIndexed { i, (e, k) ->
-                NavigationBarItem(selected = tab == i, onClick = { tab = i }, icon = { Text(e) }, label = { Text(tr(k, fa)) })
+    val url = updUrl
+    if (updMsg.isNotEmpty()) AlertDialog(
+        onDismissRequest = { updMsg = "" },
+        title = { Text(t("check_update")) },
+        text = { Text(updMsg) },
+        confirmButton = {
+            if (url != null) TextButton({ startUpdate(url) }) { Text(t("update")) }
+            else TextButton({ updMsg = "" }) { Text(t("ok")) }
+        },
+        dismissButton = { if (url != null) TextButton({ updMsg = "" }) { Text(t("cancel")) } })
+
+    Scaffold(
+        topBar = {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box {
+                    IconButton({ menu = true }) { Icon(IconMenu, null) }
+                    DropdownMenu(menu, { menu = false }) {
+                        DropdownMenuItem(text = { Text(t("check_update")) }, leadingIcon = { Icon(IconRefresh, null) },
+                            onClick = { menu = false; checkUpdate() })
+                        DropdownMenuItem(text = { Text("v$cur") }, onClick = {}, enabled = false)
+                    }
+                }
+                Image(painterResource(R.drawable.logo), null, Modifier.size(34.dp).clip(RoundedCornerShape(8.dp)))
+                Spacer(Modifier.width(8.dp))
+                Text("Parvane Scanner", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                Text(t("dark")); Spacer(Modifier.width(4.dp)); Switch(dark, onDark)
+                TextButton({ onFa(!fa) }) { Text(if (fa) "English" else "فارسی") }
+            }
+        },
+        bottomBar = {
+            NavigationBar {
+                listOf(IconCloud to "tab_cf", IconGlobe to "tab_sni", IconInfo to "tab_about").forEachIndexed { i, (ic, k) ->
+                    NavigationBarItem(selected = tab == i, onClick = { tab = i }, icon = { Icon(ic, null) }, label = { Text(t(k)) })
+                }
             }
         }
-    }) { pad ->
+    ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
             // all tabs stay composed so a running scan is not lost when switching tabs
             for (i in 0..2) Box(if (tab == i) Modifier.fillMaxSize() else Modifier.size(0.dp).clipToBounds()) {
                 when (i) {
-                    0 -> CfTab(fa, dark, onFa, onDark)
-                    1 -> SniTab(fa, dark, onFa, onDark)
-                    else -> AboutTab(fa, dark, onFa, onDark)
+                    0 -> CfTab(fa)
+                    1 -> SniTab(fa)
+                    else -> AboutTab(fa)
                 }
             }
         }
@@ -419,11 +578,12 @@ fun ScannerScreen(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (
 }
 
 @Composable
-fun CfTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean) -> Unit) {
+fun CfTab(fa: Boolean) {
     fun t(k: String) = tr(k, fa)
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
     val ctx = LocalContext.current
+    var provider by remember { mutableStateOf(0) } // 0 Cloudflare, 1 Fastly
     var port by remember { mutableStateOf(443) }
     var perRange by remember { mutableStateOf(30) }
     var status by remember { mutableStateOf("") }
@@ -436,6 +596,7 @@ fun CfTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean)
     var cfgError by remember { mutableStateOf(false) }
     var cfgUsed by remember { mutableStateOf<Cfg?>(null) }
     val running = job?.isActive == true
+    val rangeCount = if (provider == 0) CF_RANGES.size else FASTLY_RANGES.size
 
     val ipSaver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         if (uri != null) { save(ctx, uri, results.joinToString("\n") { it.ip }); status = t("saved") }
@@ -447,7 +608,7 @@ fun CfTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean)
     fun finish(list: List<Result>, c: Cfg?) {
         results = list; cfgUsed = c
         status = if (list.isEmpty()) t("none") else t("done")
-        if (toFile && list.isNotEmpty()) { if (c != null) cfgSaver.launch("configs.txt") else ipSaver.launch("cloudflare_ips.txt") }
+        if (toFile && list.isNotEmpty()) { if (c != null) cfgSaver.launch("configs.txt") else ipSaver.launch("ips.txt") }
     }
 
     if (stage == 1) AlertDialog(onDismissRequest = {}, title = { Text(t("q_out")) },
@@ -475,10 +636,15 @@ fun CfTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean)
         dismissButton = { TextButton({ stage = 0; finish(scanned, null) }) { Text(t("cancel")) } })
 
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Header(t("title"), fa, dark, onFa, onDark)
+        Text(t("provider"))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("Cloudflare", "Fastly").forEachIndexed { i, n ->
+                FilterChip(selected = provider == i, enabled = !running, onClick = { provider = i; port = 443 }, label = { Text(n) })
+            }
+        }
         Text(t("port"))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(HTTPS_PORTS + HTTP_PORTS) { p ->
+            items(if (provider == 0) HTTPS_PORTS + HTTP_PORTS else listOf(443, 80)) { p ->
                 FilterChip(selected = port == p, enabled = !running, onClick = { port = p }, label = { Text("$p") })
             }
         }
@@ -486,7 +652,7 @@ fun CfTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf(10 to "quick", 30 to "normal", 80 to "deep").forEach { (n, k) ->
                 FilterChip(selected = perRange == n, enabled = !running, onClick = { perRange = n },
-                    label = { Text("${t(k)} (${n * CF_RANGES.size})") })
+                    label = { Text("${t(k)} (${n * rangeCount})") })
             }
         }
         Button(
@@ -494,7 +660,7 @@ fun CfTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean)
                 if (running) { job?.cancel(); status = t("stopped") } else {
                     results = emptyList(); cfgUsed = null
                     job = scope.launch {
-                        scanned = scan(port, perRange) { s -> status = s }
+                        scanned = scan(provider, port, perRange) { s -> status = s }
                         results = scanned
                         if (scanned.isEmpty()) status = t("none") else stage = 1
                     }
@@ -507,8 +673,12 @@ fun CfTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean)
         if (results.isNotEmpty() && !running) {
             Text("${t("found")}: ${results.size}")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton({ ipSaver.launch("cloudflare_ips.txt") }, Modifier.weight(1f)) { Text(t("save_ips")) }
-                if (cfgUsed != null) OutlinedButton({ cfgSaver.launch("configs.txt") }, Modifier.weight(1f)) { Text(t("save_cfgs")) }
+                OutlinedButton({ ipSaver.launch("ips.txt") }, Modifier.weight(1f)) {
+                    Icon(IconDownload, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(t("save_ips"))
+                }
+                if (cfgUsed != null) OutlinedButton({ cfgSaver.launch("configs.txt") }, Modifier.weight(1f)) {
+                    Icon(IconDownload, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(t("save_cfgs"))
+                }
             }
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -517,7 +687,7 @@ fun CfTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean)
                     Column(Modifier.padding(12.dp)) {
                         Text(r.ip)
                         Text("${r.pingMs} ms  |  " + (r.mbps?.let { "%.1f Mbps".format(it) } ?: "-") +
-                            (r.cfgMs?.let { "  |  config ✓ $it ms" } ?: ""))
+                            (r.cfgMs?.let { "  |  config OK $it ms" } ?: ""))
                     }
                 }
             }
@@ -526,7 +696,7 @@ fun CfTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean)
 }
 
 @Composable
-fun SniTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean) -> Unit) {
+fun SniTab(fa: Boolean) {
     fun t(k: String) = tr(k, fa)
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
@@ -543,7 +713,7 @@ fun SniTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean
         }
     }
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Header(t("sni_title"), fa, dark, onFa, onDark)
+        Text(t("sni_title"), style = MaterialTheme.typography.titleMedium)
         Text(t("sni_hint"), style = MaterialTheme.typography.bodySmall)
         OutlinedTextField(extra, { extra = it }, label = { Text(t("extra")) }, modifier = Modifier.fillMaxWidth(), maxLines = 3, enabled = !running)
         Button(
@@ -563,7 +733,9 @@ fun SniTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean
         Text(status.ifEmpty { t("ready") })
         if (results.isNotEmpty() && !running) {
             Text("${t("found")}: ${results.size}")
-            OutlinedButton({ saver.launch("reality_sni.txt") }, Modifier.fillMaxWidth()) { Text(t("to_file")) }
+            OutlinedButton({ saver.launch("reality_sni.txt") }, Modifier.fillMaxWidth()) {
+                Icon(IconDownload, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(t("to_file"))
+            }
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(results) { r ->
@@ -580,14 +752,18 @@ fun SniTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean
 }
 
 @Composable
-fun AboutTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean) -> Unit) {
+fun AboutTab(fa: Boolean) {
     fun t(k: String) = tr(k, fa)
     val uri = LocalUriHandler.current
     Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Header(t("about_t"), fa, dark, onFa, onDark)
+        Text(t("about_t"), style = MaterialTheme.typography.titleMedium)
         Image(painterResource(R.drawable.logo), null, Modifier.size(120.dp).clip(RoundedCornerShape(20.dp)).align(Alignment.CenterHorizontally))
         Text(t("about_text"))
-        OutlinedButton({ uri.openUri(CHANNEL) }, Modifier.fillMaxWidth()) { Text(t("channel")) }
-        Button({ uri.openUri(DEV) }, Modifier.fillMaxWidth().height(52.dp)) { Text(t("contact")) }
+        OutlinedButton({ uri.openUri(CHANNEL) }, Modifier.fillMaxWidth()) {
+            Icon(IconUsers, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(t("channel"))
+        }
+        Button({ uri.openUri(DEV) }, Modifier.fillMaxWidth().height(52.dp)) {
+            Icon(IconSend, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(t("contact"))
+        }
     }
 }
