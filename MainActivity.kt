@@ -72,7 +72,12 @@ val S = mapOf(
     "cancel" to ("Cancel" to "لغو"),
     "bad" to ("Config not valid or type not supported" to "کانفیگ معتبر نیست یا نوعش پشتیبانی نمی‌شود"),
     "saved" to ("File saved" to "فایل ذخیره شد"),
-    "none" to ("No working IP found" to "IP سالمی پیدا نشد")
+    "none" to ("No working IP found" to "IP سالمی پیدا نشد"),
+    "tab_cf" to ("Cloudflare IP" to "IP کلودفلر"),
+    "tab_sni" to ("SNI / Target" to "SNI / تارگت"),
+    "sni_title" to ("SNI / Target Scanner" to "اسکنر SNI / تارگت"),
+    "sni_hint" to ("Tests foreign sites from your phone's network: ping, response time, speed, TLS 1.3 and h2 (needed for Reality). Tap a domain to copy." to "سایت‌های خارجی را با اینترنت گوشی شما تست می‌کند: پینگ، زمان پاسخ، سرعت، TLS 1.3 و h2 (لازم برای Reality). برای کپی روی دامنه بزنید."),
+    "extra" to ("Extra domains (optional, comma or line separated)" to "دامنه‌های اضافه (اختیاری، با کاما یا خط جدید)")
 )
 
 // ---------- Scanning ----------
@@ -221,7 +226,7 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScannerScreen(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean) -> Unit) {
+fun CfTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean) -> Unit) {
     fun t(k: String) = S[k]!!.let { if (fa) it.second else it.first }
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
@@ -316,5 +321,125 @@ fun ScannerScreen(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (
                 }
             }
         }
+    }
+}
+
+
+// ---------- SNI / Reality target scanner ----------
+val SNI_LIST = listOf(
+    "www.microsoft.com", "www.apple.com", "icloud.com", "www.samsung.com", "www.amd.com", "www.nvidia.com",
+    "www.intel.com", "www.cisco.com", "www.oracle.com", "www.ibm.com", "www.dell.com", "www.hp.com",
+    "www.lenovo.com", "www.asus.com", "www.logitech.com", "www.sony.com", "www.speedtest.net",
+    "addons.mozilla.org", "www.mozilla.org", "www.python.org", "nodejs.org", "www.docker.com", "github.com",
+    "gitlab.com", "stackoverflow.com", "www.wikipedia.org", "www.bbc.com", "www.amazon.com", "aws.amazon.com",
+    "www.ebay.com", "www.zoom.us", "www.adobe.com", "www.salesforce.com", "www.spotify.com", "www.tesla.com",
+    "www.ubuntu.com", "www.debian.org", "www.kernel.org", "www.gnu.org", "www.mit.edu", "www.stanford.edu",
+    "www.harvard.edu", "www.ted.com", "www.booking.com", "www.airbnb.com", "www.vmware.com", "www.shopify.com",
+    "www.dropbox.com"
+)
+
+data class SniRes(val host: String, val pingMs: Long, val totalMs: Long, val mbps: Double?, val tls13: Boolean, val h2: Boolean)
+
+fun sniTest(host: String): SniRes? = try {
+    val addr = InetAddress.getByName(host)
+    val tp = System.nanoTime()
+    Socket().use { it.connect(InetSocketAddress(addr, 443), 2500) }
+    val ping = (System.nanoTime() - tp) / 1_000_000
+    val client = OkHttpClient.Builder()
+        .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1)).followRedirects(false)
+        .connectTimeout(4, TimeUnit.SECONDS).readTimeout(5, TimeUnit.SECONDS).callTimeout(8, TimeUnit.SECONDS).build()
+    val t = System.nanoTime()
+    client.newCall(Request.Builder().url("https://$host/").build()).execute().use { r ->
+        val ttfb = (System.nanoTime() - t) / 1_000_000
+        val tls13 = r.handshake?.tlsVersion == TlsVersion.TLS_1_3
+        val h2 = r.protocol == Protocol.HTTP_2
+        val t2 = System.nanoTime(); var total = 0L
+        val s = r.body!!.byteStream(); val buf = ByteArray(16384)
+        while (total < 500_000) { val n = s.read(buf); if (n < 0) break; total += n }
+        val sec = (System.nanoTime() - t2) / 1e9
+        SniRes(host, ping, ttfb, if (total > 50_000 && sec > 0) total * 8 / 1e6 / sec else null, tls13, h2)
+    }
+} catch (e: Exception) { null }
+
+suspend fun scanSni(hosts: List<String>, status: (String) -> Unit): List<SniRes> = coroutineScope {
+    val sem = Semaphore(8); val done = AtomicInteger(0)
+    hosts.map { h ->
+        async(Dispatchers.IO) { sem.withPermit { val r = sniTest(h); status("${done.incrementAndGet()}/${hosts.size}"); r } }
+    }.awaitAll().filterNotNull()
+        .sortedWith(compareByDescending<SniRes> { it.h2 && it.tls13 }.thenBy { it.pingMs + it.totalMs })
+}
+
+@Composable
+fun Header(title: String, fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(if (fa) "تیره" else "Dark"); Spacer(Modifier.width(4.dp)); Switch(dark, onDark)
+            TextButton({ onFa(!fa) }) { Text(if (fa) "English" else "فارسی") }
+        }
+    }
+}
+
+@Composable
+fun SniTab(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean) -> Unit) {
+    fun t(k: String) = S[k]!!.let { if (fa) it.second else it.first }
+    val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
+    val ctx = LocalContext.current
+    var extra by remember { mutableStateOf("") }
+    var status by remember { mutableStateOf("") }
+    var job by remember { mutableStateOf<Job?>(null) }
+    var results by remember { mutableStateOf(listOf<SniRes>()) }
+    val running = job?.isActive == true
+    val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        if (uri != null) {
+            val good = results.filter { it.h2 && it.tls13 }.ifEmpty { results }
+            ctx.contentResolver.openOutputStream(uri)?.use { o -> o.write(good.joinToString("\n") { it.host }.toByteArray()) }
+            status = t("saved")
+        }
+    }
+    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Header(t("sni_title"), fa, dark, onFa, onDark)
+        Text(t("sni_hint"), style = MaterialTheme.typography.bodySmall)
+        OutlinedTextField(extra, { extra = it }, label = { Text(t("extra")) }, modifier = Modifier.fillMaxWidth(), maxLines = 3, enabled = !running)
+        Button(
+            onClick = {
+                if (running) { job?.cancel(); status = t("stopped") } else {
+                    results = emptyList()
+                    val more = extra.lowercase().split(Regex("[\\s,]+")).map { it.removePrefix("https://").trimEnd('/') }.filter { it.contains(".") }
+                    job = scope.launch {
+                        results = scanSni((SNI_LIST + more).distinct()) { s -> status = s }
+                        status = if (results.isEmpty()) t("none") else t("done")
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text(if (running) t("stop") else t("start")) }
+        if (results.isNotEmpty() && !running) OutlinedButton({ saver.launch("reality_sni.txt") }, Modifier.fillMaxWidth()) { Text(t("to_file")) }
+        Text(status.ifEmpty { t("ready") })
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            items(results) { r ->
+                Card(Modifier.fillMaxWidth().clickable { clipboard.setText(AnnotatedString(r.host)) }) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(r.host)
+                        Text("${r.pingMs} ms  |  ${r.totalMs} ms  |  " + (r.mbps?.let { "%.1f Mbps".format(it) } ?: "-") +
+                            (if (r.tls13) "  |  TLS1.3" else "") + (if (r.h2) "  |  h2" else ""))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ScannerScreen(fa: Boolean, dark: Boolean, onFa: (Boolean) -> Unit, onDark: (Boolean) -> Unit) {
+    var tab by remember { mutableStateOf(0) }
+    fun t(k: String) = S[k]!!.let { if (fa) it.second else it.first }
+    Column(Modifier.statusBarsPadding()) {
+        TabRow(selectedTabIndex = tab) {
+            Tab(tab == 0, { tab = 0 }, text = { Text(t("tab_cf")) })
+            Tab(tab == 1, { tab = 1 }, text = { Text(t("tab_sni")) })
+        }
+        if (tab == 0) CfTab(fa, dark, onFa, onDark) else SniTab(fa, dark, onFa, onDark)
     }
 }
