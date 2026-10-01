@@ -1,154 +1,357 @@
 package com.example.cfscanner
 
+import android.app.DownloadManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
-import okhttp3.Dns
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.net.InetAddress
-import java.net.InetSocketAddress
-import java.net.Socket
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
-import kotlin.random.Random
-
-// Official Cloudflare IPv4 ranges (https://www.cloudflare.com/ips-v4)
-val CF_RANGES = listOf(
-    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
-    "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
-    "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
-    "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22"
-)
-
-// Ports proxied by Cloudflare. HTTPS: 443, 2053, 2083, 2087, 2096, 8443 / HTTP: 80, 8080, 8880, 2052, 2082, 2086, 2095
-val HTTPS_PORTS = listOf(443, 2053, 2083, 2087, 2096, 8443)
-val HTTP_PORTS = listOf(80, 8080, 8880, 2052, 2082, 2086, 2095)
-
-data class Result(val ip: String, val pingMs: Long, val mbps: Double?)
-
-fun randomIps(cidr: String, n: Int): List<String> {
-    val (b, p) = cidr.split("/")
-    val base = b.split(".").fold(0L) { a, s -> a * 256 + s.toLong() }
-    val size = 1L shl (32 - p.toInt())
-    return List(n) {
-        val v = base + Random.nextLong(1, size - 1)
-        "${(v shr 24) and 255}.${(v shr 16) and 255}.${(v shr 8) and 255}.${v and 255}"
-    }
-}
-
-// TCP connect time in ms (null = unreachable). Uses the phone's own active network.
-fun tcpPing(ip: String, port: Int, timeoutMs: Int): Long? = try {
-    val t = System.nanoTime()
-    Socket().use { it.connect(InetSocketAddress(ip, port), timeoutMs) }
-    (System.nanoTime() - t) / 1_000_000
-} catch (e: Exception) { null }
-
-// Download ~3MB from speed.cloudflare.com through the given edge IP:port
-fun speedTest(ip: String, port: Int): Double? = try {
-    val https = port in HTTPS_PORTS
-    val addr = InetAddress.getByName(ip)
-    val client = OkHttpClient.Builder()
-        .dns(object : Dns { override fun lookup(hostname: String) = listOf(addr) })
-        .followRedirects(false)
-        .connectTimeout(3, TimeUnit.SECONDS).readTimeout(6, TimeUnit.SECONDS).build()
-    val url = "${if (https) "https" else "http"}://speed.cloudflare.com:$port/__down?bytes=3000000"
-    val t = System.nanoTime()
-    var total = 0L
-    client.newCall(Request.Builder().url(url).build()).execute().use { r ->
-        if (!r.isSuccessful) return@use
-        val s = r.body!!.byteStream(); val buf = ByteArray(16384)
-        while (true) { val n = s.read(buf); if (n < 0) break; total += n }
-    }
-    val sec = (System.nanoTime() - t) / 1e9
-    if (total == 0L) null else total * 8 / 1e6 / sec
-} catch (e: Exception) { null }
-
-suspend fun scan(port: Int, perRange: Int, status: (String) -> Unit): List<Result> = coroutineScope {
-    val ips = CF_RANGES.flatMap { randomIps(it, perRange) }
-    val done = AtomicInteger(0)
-    val sem = Semaphore(150)
-    // Phase 1: ping every sampled IP
-    val alive = ips.map { ip ->
-        async(Dispatchers.IO) {
-            sem.withPermit {
-                val p = tcpPing(ip, port, 1500)
-                status("Ping: ${done.incrementAndGet()}/${ips.size}")
-                p?.let { ip to it }
-            }
-        }
-    }.awaitAll().filterNotNull().sortedBy { it.second }
-    // Phase 2: speed test the 10 best (one at a time so they don't share bandwidth)
-    val out = mutableListOf<Result>()
-    alive.take(10).forEachIndexed { i, (ip, ping) ->
-        status("Speed: ${i + 1}/10")
-        out += Result(ip, ping, withContext(Dispatchers.IO) { speedTest(ip, port) })
-    }
-    out + alive.drop(10).take(20).map { Result(it.first, it.second, null) }
-}
+import com.example.cfscanner.xray.XrayRunner
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { Surface(Modifier.fillMaxSize()) { ScannerScreen() } } }
+
+        val prefs = getSharedPreferences("p", MODE_PRIVATE)
+        XrayRunner.cleanupLeftovers(filesDir)
+
+        setContent {
+            var dark by remember { mutableStateOf(prefs.getBoolean("dark", true)) }
+            var fa by remember { mutableStateOf(prefs.getBoolean("fa", true)) }
+            var showJoin by remember { mutableStateOf(!prefs.getBoolean("joined", false)) }
+            val uri = LocalUriHandler.current
+
+            MaterialTheme(
+                colorScheme = if (dark) darkColorScheme() else lightColorScheme()
+            ) {
+                CompositionLocalProvider(
+                    LocalLayoutDirection provides if (fa) {
+                        LayoutDirection.Rtl
+                    } else {
+                        LayoutDirection.Ltr
+                    }
+                ) {
+                    Surface(Modifier.fillMaxSize()) {
+                        ScannerScreen(
+                            fa = fa,
+                            dark = dark,
+                            onFa = {
+                                fa = it
+                                prefs.edit().putBoolean("fa", it).apply()
+                            },
+                            onDark = {
+                                dark = it
+                                prefs.edit().putBoolean("dark", it).apply()
+                            }
+                        )
+
+                        if (showJoin) {
+                            AlertDialog(
+                                onDismissRequest = { showJoin = false },
+                                title = { Text(tr("join_t", fa)) },
+                                text = { Text(tr("join_msg", fa)) },
+                                confirmButton = {
+                                    TextButton({
+                                        prefs.edit().putBoolean("joined", true).apply()
+                                        showJoin = false
+                                        uri.openUri(CHANNEL)
+                                    }) {
+                                        Text(tr("join", fa))
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton({ showJoin = false }) {
+                                        Text(tr("later", fa))
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScannerScreen() {
-    val scope = rememberCoroutineScope()
-    val clipboard = LocalClipboardManager.current
-    var port by remember { mutableStateOf(443) }
-    var perRange by remember { mutableStateOf(20f) }
-    var status by remember { mutableStateOf("Ready") }
-    var job by remember { mutableStateOf<Job?>(null) }
-    var results by remember { mutableStateOf(listOf<Result>()) }
-    val running = job?.isActive == true
+fun ScannerScreen(
+    fa: Boolean,
+    dark: Boolean,
+    onFa: (Boolean) -> Unit,
+    onDark: (Boolean) -> Unit
+) {
+    fun t(key: String) = tr(key, fa)
 
-    Column(Modifier.padding(16.dp).statusBarsPadding(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Cloudflare IP Scanner", style = MaterialTheme.typography.titleLarge)
-        Text("Port")
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(HTTPS_PORTS + HTTP_PORTS) { p ->
-                FilterChip(selected = port == p, enabled = !running, onClick = { port = p }, label = { Text("$p") })
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val uri = LocalUriHandler.current
+    var tab by remember { mutableStateOf(0) }
+    var menu by remember { mutableStateOf(false) }
+    var updateMessage by remember { mutableStateOf("") }
+    var updateUrl by remember { mutableStateOf<String?>(null) }
+    val currentVersion = remember {
+        runCatching {
+            context.packageManager
+                .getPackageInfo(context.packageName, 0)
+                .versionName
+                ?: "0"
+        }.getOrDefault("0")
+    }
+
+    fun checkUpdate() {
+        updateMessage = t("checking")
+        updateUrl = null
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { fetchLatest() }
+            updateMessage = when {
+                result == null -> t("upd_err")
+                !isNewer(result.first, currentVersion) -> t("upd_none")
+                result.second == null -> t("upd_noapk")
+                else -> "${t("upd_new")} ${result.first}"
+            }
+            updateUrl = result?.second
+        }
+    }
+
+    fun startUpdate(url: String) {
+        if (Build.VERSION.SDK_INT >= 26 &&
+            !context.packageManager.canRequestPackageInstalls()
+        ) {
+            updateMessage = t("allow_install")
+            updateUrl = null
+            context.startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:${context.packageName}")
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            return
+        }
+
+        updateMessage = t("downloading")
+        updateUrl = null
+        scope.launch {
+            try {
+                val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                val request = DownloadManager.Request(Uri.parse(url))
+                    .setTitle("Parvane Scanner")
+                    .setDestinationInExternalFilesDir(
+                        context,
+                        Environment.DIRECTORY_DOWNLOADS,
+                        "update-${System.currentTimeMillis()}.apk"
+                    )
+                    .setMimeType("application/vnd.android.package-archive")
+                    .setNotificationVisibility(
+                        DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+                    )
+                val id = manager.enqueue(request)
+
+                while (true) {
+                    val query = DownloadManager.Query().setFilterById(id)
+                    manager.query(query).use { cursor ->
+                        if (!cursor.moveToFirst()) {
+                            throw Exception("missing")
+                        }
+
+                        val status = cursor.getInt(
+                            cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)
+                        )
+                        if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                            val apkUri = manager.getUriForDownloadedFile(id)
+                                ?: throw Exception("missing apk uri")
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, apkUri)
+                                    .setDataAndType(
+                                        apkUri,
+                                        "application/vnd.android.package-archive"
+                                    )
+                                    .addFlags(
+                                        Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                            Intent.FLAG_ACTIVITY_NEW_TASK
+                                    )
+                            )
+                            updateMessage = ""
+                            return@launch
+                        }
+
+                        if (status == DownloadManager.STATUS_FAILED) {
+                            throw Exception("failed")
+                        }
+                    }
+                    delay(800)
+                }
+            } catch (_: Exception) {
+                updateMessage = ""
+                uri.openUri(url)
             }
         }
-        Text("Samples per range: ${perRange.toInt()}  (total ${perRange.toInt() * CF_RANGES.size})")
-        Slider(perRange, { perRange = it }, valueRange = 5f..100f, enabled = !running)
-        Button(
-            onClick = {
-                if (running) { job?.cancel(); status = "Stopped" } else {
-                    results = emptyList()
-                    job = scope.launch {
-                        results = scan(port, perRange.toInt()) { s -> status = s }
-                        status = "Done: ${results.size} results (tap an IP to copy)"
+    }
+
+    if (updateMessage.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { updateMessage = "" },
+            title = { Text(t("check_update")) },
+            text = { Text(updateMessage) },
+            confirmButton = {
+                if (updateUrl != null) {
+                    TextButton({ startUpdate(updateUrl!!) }) {
+                        Text(t("update"))
+                    }
+                } else {
+                    TextButton({ updateMessage = "" }) {
+                        Text(t("ok"))
                     }
                 }
             },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text(if (running) "Stop" else "Start scan") }
-        Text(status)
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            items(results) { r ->
-                Card(Modifier.fillMaxWidth().clickable { clipboard.setText(AnnotatedString(r.ip)) }) {
-                    Row(Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(r.ip)
-                        Text("${r.pingMs} ms  |  " + (r.mbps?.let { "%.1f Mbps".format(it) } ?: "-"))
+            dismissButton = {
+                if (updateUrl != null) {
+                    TextButton({ updateMessage = "" }) {
+                        Text(t("cancel"))
+                    }
+                }
+            }
+        )
+    }
+
+    Scaffold(
+        topBar = {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box {
+                    IconButton({ menu = true }) {
+                        Icon(IconMenu, null)
+                    }
+                    DropdownMenu(
+                        expanded = menu,
+                        onDismissRequest = { menu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(t("check_update")) },
+                            leadingIcon = { Icon(IconRefresh, null) },
+                            onClick = {
+                                menu = false
+                                checkUpdate()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("v$currentVersion") },
+                            onClick = {},
+                            enabled = false
+                        )
+                    }
+                }
+
+                Image(
+                    painterResource(com.example.cfscanner.R.drawable.logo),
+                    null,
+                    Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Parvane Scanner",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(t("dark"))
+                Spacer(Modifier.width(4.dp))
+                Switch(dark, onDark)
+                TextButton({ onFa(!fa) }) {
+                    Text(if (fa) "English" else "فارسی")
+                }
+            }
+        },
+        bottomBar = {
+            NavigationBar {
+                listOf(
+                    IconCloud to "tab_cf",
+                    IconGlobe to "tab_sni",
+                    IconInfo to "tab_about"
+                ).forEachIndexed { index, (icon, key) ->
+                    NavigationBarItem(
+                        selected = tab == index,
+                        onClick = { tab = index },
+                        icon = { Icon(icon, null) },
+                        label = { Text(t(key)) }
+                    )
+                }
+            }
+        }
+    ) { paddingValues ->
+        Box(
+            Modifier
+                .padding(paddingValues)
+                .fillMaxSize()
+        ) {
+            for (index in 0..2) {
+                Box(
+                    if (tab == index) {
+                        Modifier.fillMaxSize()
+                    } else {
+                        Modifier
+                            .size(0.dp)
+                            .clipToBounds()
+                    }
+                ) {
+                    when (index) {
+                        0 -> CfTab(fa)
+                        1 -> SniTab(fa)
+                        else -> AboutTab(fa)
                     }
                 }
             }
