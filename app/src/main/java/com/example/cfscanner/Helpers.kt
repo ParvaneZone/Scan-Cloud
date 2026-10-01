@@ -2,7 +2,10 @@ package com.example.cfscanner
 
 import android.content.Context
 import android.net.Uri
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.withPermit
 import org.json.JSONObject
 import java.net.InetAddress
@@ -75,7 +78,9 @@ fun speedTest(ip: String, port: Int, provider: Int): Double? = try {
     val https = port in HTTPS_PORTS
     val address = InetAddress.getByName(ip)
     val client = okhttp3.OkHttpClient.Builder()
-        .dns { listOf(address) }
+        .dns(object : okhttp3.Dns {
+            override fun lookup(hostname: String): List<InetAddress> = listOf(address)
+        })
         .followRedirects(false)
         .connectTimeout(3, TimeUnit.SECONDS)
         .readTimeout(6, TimeUnit.SECONDS)
@@ -151,27 +156,29 @@ suspend fun scan(
     val ips = ranges.flatMap { randomIps(it, perRange) }.distinct()
     val done = AtomicInteger(0)
     val sem = kotlinx.coroutines.sync.Semaphore(150)
-    val alive = ips.map { ip ->
-        kotlinx.coroutines.async(kotlinx.coroutines.Dispatchers.IO) {
+    val alive: List<Pair<String, Long>> = ips.map { ip ->
+        async(Dispatchers.IO) {
             sem.withPermit {
-                val ping = tcpPing(ip, port, 1_500)
+                val ping: Long? = tcpPing(ip, port, 1_500)
                 status("Ping: ${done.incrementAndGet()}/${ips.size}")
-                ping?.let { ip to it }
+                if (ping != null) Pair(ip, ping) else null
             }
         }
-    }.awaitAll().filterNotNull().sortedBy { it.second }
+    }.awaitAll().filterNotNull().sortedBy { pair -> pair.second }
     val out = mutableListOf<Result>()
-    alive.take(20).forEachIndexed { index, (ip, ping) ->
+    val top: List<Pair<String, Long>> = alive.take(20)
+    for (index in top.indices) {
+        val entry = top[index]
         status("Speed: ${index + 1}/20")
-        out += Result(
-            ip = ip,
-            pingMs = ping,
-            mbps = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                speedTest(ip, port, provider)
-            }
-        )
+        val mbps: Double? = withContext(Dispatchers.IO) {
+            speedTest(entry.first, port, provider)
+        }
+        out.add(Result(ip = entry.first, pingMs = entry.second, mbps = mbps))
     }
-    out + alive.drop(20).map { Result(it.first, it.second, null) }
+    for (entry in alive.drop(20)) {
+        out.add(Result(ip = entry.first, pingMs = entry.second, mbps = null))
+    }
+    out
 }
 
 fun fetchLatest(): Pair<String, String?>? = try {

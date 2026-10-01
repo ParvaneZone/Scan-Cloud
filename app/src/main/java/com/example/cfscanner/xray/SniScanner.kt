@@ -123,7 +123,9 @@ class SniScanner(
         Socket().use { it.connect(InetSocketAddress(address, 443), 2_500) }
         val pingMs = (System.nanoTime() - pingStart) / 1_000_000
         val client = OkHttpClient.Builder()
-            .dns { listOf(address) }
+            .dns(object : okhttp3.Dns {
+                override fun lookup(hostname: String): List<InetAddress> = listOf(address)
+            })
             .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
             .followRedirects(false)
             .connectTimeout(3, TimeUnit.SECONDS)
