@@ -5,6 +5,7 @@ val S = mapOf(
     "dark" to ("Dark" to "تیره"),
     "port" to ("Port" to "پورت"),
     "scan_size" to ("Scan size (IPs tested)" to "حجم اسکن (تعداد IP تست‌شده)"),
+    "include_v6" to ("Include IPv6 ranges (needs IPv6 on your network)" to "شامل کردن رنج‌های IPv6 (نیاز به IPv6 روی اینترنت شما)"),
     "quick" to ("Quick" to "سریع"),
     "normal" to ("Normal" to "معمولی"),
     "deep" to ("Deep" to "عمیق"),

@@ -113,3 +113,9 @@ gradle assembleDebug --no-daemon
 - [ ] Confirm the APK is downloaded to the app-specific external Downloads directory.
 - [ ] Confirm installation uses the `content://` URI returned by DownloadManager and never a `file://` URI.
 - [ ] Verify in-place updates with the original `debug.keystore`.
+
+## IPv6 / extra ranges / SNI update
+
+- `Helpers.kt`: added Cloudflare IPv6 ranges (7), Fastly IPv6 ranges (2) and two extra Fastly blocks (`87.81.224.0/19`, `8.18.217.0/24`); `liveRanges` now also reads `ips-v6` and `ipv6_addresses`; `randomIps` supports IPv6; IPv6 hosts are bracketed in generated vless/trojan/ss configs; 46 new SNI domains.
+- `CfTab.kt` / `Strings.kt`: new "Include IPv6" checkbox (off by default).
+- Not built or run here (no Android SDK); please build via CI and test on a device.

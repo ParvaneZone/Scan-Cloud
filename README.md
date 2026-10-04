@@ -39,6 +39,7 @@ Results depend on your operator, the time of day and your network conditions, so
 <div dir="rtl" align="right">
 
 - اسکن IP کلودفلر و Fastly (لیست رنج‌ها از منبع رسمی دانلود می‌شود و اگر نشد از لیست داخلی استفاده می‌کند)
+- پشتیبانی اختیاری از رنج‌های IPv6 و چند رنج اضافهٔ Fastly (غیررسمی؛ فقط IPهایی که جواب بدهند می‌مانند)
 - انتخاب پورت از بین پورت‌های پشتیبانی‌شدهٔ کلودفلر (۴۴۳، ۲۰۵۳، ۲۰۸۳، ۲۰۸۷، ۲۰۹۶، ۸۴۴۳، ۸۰، ۸۰۸۰ و ...)
 - سه حالت اسکن: سریع، معمولی، عمیق
 - نمایش پینگ و سرعت دانلود هر IP
@@ -51,6 +52,7 @@ Results depend on your operator, the time of day and your network conditions, so
 </div>
 
 - Scan Cloudflare and Fastly IPs (the range lists are downloaded from the official sources, with a built-in fallback)
+- Optional IPv6 ranges and a few extra (unofficial) Fastly blocks; only IPs that really respond are kept
 - Choose the port from the ports supported by Cloudflare (443, 2053, 2083, 2087, 2096, 8443, 80, 8080, etc.)
 - Three scan modes: Quick, Normal, Deep
 - Ping and download speed for every IP
