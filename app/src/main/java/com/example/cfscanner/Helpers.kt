@@ -47,8 +47,12 @@ val FASTLY_RANGES_V6 = listOf("2a04:4e40::/32", "2a04:4e42::/32")
 // public-ip-list, so they are scanned as extras and only IPs that answer are kept.
 val FASTLY_EXTRA_RANGES = listOf("87.81.224.0/19", "8.18.217.0/24")
 
-fun fallbackRanges(provider: Int, includeV6: Boolean): List<String> {
-    val v4 = if (provider == 0) CF_RANGES else FASTLY_RANGES + FASTLY_EXTRA_RANGES
+fun fallbackRanges(provider: Int, includeV6: Boolean, extended: Boolean = false): List<String> {
+    val v4 = if (provider == 0) {
+        if (extended) CF_RANGES + CF_EXTRA_RANGES else CF_RANGES
+    } else {
+        FASTLY_RANGES + FASTLY_EXTRA_RANGES
+    }
     val v6 = if (provider == 0) CF_RANGES_V6 else FASTLY_RANGES_V6
     return if (includeV6) v4 + v6 else v4
 }
@@ -182,8 +186,8 @@ fun speedTest(ip: String, port: Int, provider: Int): Double? = try {
 private val V4_CIDR = Regex("\\d+\\.\\d+\\.\\d+\\.\\d+/\\d+")
 private val V6_CIDR = Regex("[0-9a-fA-F:]+:[0-9a-fA-F:]*/\\d+")
 
-fun liveRanges(provider: Int, includeV6: Boolean = false): List<String> {
-    val fallback = fallbackRanges(provider, includeV6)
+fun liveRanges(provider: Int, includeV6: Boolean = false, extended: Boolean = false): List<String> {
+    val fallback = fallbackRanges(provider, includeV6, extended)
     return try {
         val client = okhttp3.OkHttpClient.Builder()
             .connectTimeout(4, TimeUnit.SECONDS)
@@ -198,6 +202,7 @@ fun liveRanges(provider: Int, includeV6: Boolean = false): List<String> {
         val v6 = mutableListOf<String>()
         if (provider == 0) {
             v4 += get("https://www.cloudflare.com/ips-v4").lines().map(String::trim)
+            if (extended) v4 += CF_EXTRA_RANGES
             if (includeV6) {
                 runCatching { v6 += get("https://www.cloudflare.com/ips-v6").lines().map(String::trim) }
             }
@@ -221,11 +226,12 @@ suspend fun scan(
     port: Int,
     perRange: Int,
     includeV6: Boolean = false,
+    extended: Boolean = false,
     status: (String) -> Unit
 ): List<Result> = kotlinx.coroutines.coroutineScope {
     status("Loading ranges")
     val ranges = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        liveRanges(provider, includeV6)
+        liveRanges(provider, includeV6, extended)
     }
     val ips = ranges.flatMap { randomIps(it, perRange) }.distinct()
     val done = AtomicInteger(0)

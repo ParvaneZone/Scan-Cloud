@@ -6,6 +6,10 @@ val S = mapOf(
     "port" to ("Port" to "پورت"),
     "scan_size" to ("Scan size (IPs tested)" to "حجم اسکن (تعداد IP تست‌شده)"),
     "include_v6" to ("Include IPv6 ranges (needs IPv6 on your network)" to "شامل کردن رنج‌های IPv6 (نیاز به IPv6 روی اینترنت شما)"),
+    "extended_cf" to (
+        "Extended Cloudflare ranges (+613 ASN ranges, many more IPs to test)" to
+            "رنج‌های گسترده کلودفلر (+۶۱۳ رنج ASN، تعداد IP تست‌شده بسیار بیشتر)"
+    ),
     "quick" to ("Quick" to "سریع"),
     "normal" to ("Normal" to "معمولی"),
     "deep" to ("Deep" to "عمیق"),

@@ -59,6 +59,7 @@ fun CfTab(fa: Boolean) {
     var port by remember { mutableStateOf(443) }
     var perRange by remember { mutableStateOf(30) }
     var includeV6 by remember { mutableStateOf(false) }
+    var extended by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var job by remember { mutableStateOf<Job?>(null) }
     var results by remember { mutableStateOf(listOf<Result>()) }
@@ -71,7 +72,7 @@ fun CfTab(fa: Boolean) {
     var xraySpeed by remember { mutableStateOf(false) }
 
     val running = job?.isActive == true
-    val rangeCount = fallbackRanges(provider, includeV6).size
+    val rangeCount = fallbackRanges(provider, includeV6, extended && provider == 0).size
 
     val ipSaver = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain")
@@ -281,6 +282,17 @@ fun CfTab(fa: Boolean) {
             Text(t("include_v6"))
         }
 
+        if (provider == 0) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = extended,
+                    onCheckedChange = { extended = it },
+                    enabled = !running
+                )
+                Text(t("extended_cf"))
+            }
+        }
+
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(
                 checked = xraySpeed,
@@ -299,7 +311,7 @@ fun CfTab(fa: Boolean) {
                     results = emptyList()
                     configUsed = null
                     job = scope.launch {
-                        scanned = scan(provider, port, perRange, includeV6) { message ->
+                        scanned = scan(provider, port, perRange, includeV6, extended && provider == 0) { message ->
                             status = message
                         }
                         results = scanned
