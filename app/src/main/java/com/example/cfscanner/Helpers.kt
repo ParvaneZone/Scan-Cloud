@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.withPermit
 import org.json.JSONObject
 import java.net.InetAddress
+import java.math.BigInteger
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.charset.StandardCharsets
@@ -35,6 +36,23 @@ val FASTLY_RANGES = listOf(
     "185.31.16.0/22", "199.27.72.0/21", "199.232.0.0/16"
 )
 
+val CF_RANGES_V6 = listOf(
+    "2400:cb00::/32", "2405:8100::/32", "2405:b500::/32", "2606:4700::/32",
+    "2803:f800::/32", "2a06:98c0::/29", "2c0f:f248::/32"
+)
+
+val FASTLY_RANGES_V6 = listOf("2a04:4e40::/32", "2a04:4e42::/32")
+
+// Extra Fastly-owned blocks seen in public registries (AS54113). Not in the official
+// public-ip-list, so they are scanned as extras and only IPs that answer are kept.
+val FASTLY_EXTRA_RANGES = listOf("87.81.224.0/19", "8.18.217.0/24")
+
+fun fallbackRanges(provider: Int, includeV6: Boolean): List<String> {
+    val v4 = if (provider == 0) CF_RANGES else FASTLY_RANGES + FASTLY_EXTRA_RANGES
+    val v6 = if (provider == 0) CF_RANGES_V6 else FASTLY_RANGES_V6
+    return if (includeV6) v4 + v6 else v4
+}
+
 val HTTPS_PORTS = listOf(443, 2053, 2083, 2087, 2096, 8443)
 val HTTP_PORTS = listOf(80, 8080, 8880, 2052, 2082, 2086, 2095)
 
@@ -52,17 +70,64 @@ fun save(ctx: Context, uri: Uri, text: String) {
     }
 }
 
+private val secureRandom = java.security.SecureRandom()
+
+private fun formatIpv6(bytes: ByteArray): String {
+    val groups = IntArray(8) { ((bytes[it * 2].toInt() and 255) shl 8) or (bytes[it * 2 + 1].toInt() and 255) }
+    var bestStart = -1
+    var bestLen = 0
+    var i = 0
+    while (i < 8) {
+        if (groups[i] == 0) {
+            var j = i
+            while (j < 8 && groups[j] == 0) j++
+            if (j - i > bestLen) {
+                bestStart = i
+                bestLen = j - i
+            }
+            i = j
+        } else {
+            i++
+        }
+    }
+    if (bestLen < 2) return groups.joinToString(":") { it.toString(16) }
+    val head = groups.take(bestStart).joinToString(":") { it.toString(16) }
+    val tail = groups.drop(bestStart + bestLen).joinToString(":") { it.toString(16) }
+    return "$head::$tail"
+}
+
+private fun randomIpv6(cidr: String, n: Int): List<String> {
+    val (addr, prefixText) = cidr.split("/")
+    val prefix = prefixText.toInt()
+    val bits = 128 - prefix
+    val raw = InetAddress.getByName(addr).address
+    val base = BigInteger(1, raw).shiftRight(bits).shiftLeft(bits)
+    return List(n) {
+        var offset = BigInteger(bits, secureRandom)
+        if (offset.signum() == 0) offset = BigInteger.ONE
+        val value = base.add(offset).toByteArray()
+        val out = ByteArray(16)
+        val copy = minOf(16, value.size)
+        System.arraycopy(value, value.size - copy, out, 16 - copy, copy)
+        formatIpv6(out)
+    }
+}
+
 fun randomIps(cidr: String, n: Int): List<String> {
+    if (cidr.contains(':')) return randomIpv6(cidr, n)
     val (baseAddress, prefix) = cidr.split("/")
     val base = baseAddress.split('.').fold(0L) { acc, part ->
         acc * 256 + part.toLong()
     }
     val size = 1L shl (32 - prefix.toInt())
+    if (size <= 2) return listOf(baseAddress)
     return List(n) {
         val value = base + Random.nextLong(1, size - 1)
         "${(value shr 24) and 255}.${(value shr 16) and 255}.${(value shr 8) and 255}.${value and 255}"
     }
 }
+
+fun hostForUrl(ip: String): String = if (ip.contains(':')) "[$ip]" else ip
 
 fun tcpPing(ip: String, port: Int, timeoutMs: Int): Long? = try {
     val start = System.nanoTime()
@@ -114,30 +179,38 @@ fun speedTest(ip: String, port: Int, provider: Int): Double? = try {
     null
 }
 
-fun liveRanges(provider: Int): List<String> {
-    val fallback = if (provider == 0) CF_RANGES else FASTLY_RANGES
+private val V4_CIDR = Regex("\\d+\\.\\d+\\.\\d+\\.\\d+/\\d+")
+private val V6_CIDR = Regex("[0-9a-fA-F:]+:[0-9a-fA-F:]*/\\d+")
+
+fun liveRanges(provider: Int, includeV6: Boolean = false): List<String> {
+    val fallback = fallbackRanges(provider, includeV6)
     return try {
         val client = okhttp3.OkHttpClient.Builder()
             .connectTimeout(4, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)
             .build()
-        val url = if (provider == 0) {
-            "https://www.cloudflare.com/ips-v4"
-        } else {
-            "https://api.fastly.com/public-ip-list"
-        }
-        val body = client.newCall(okhttp3.Request.Builder().url(url).build())
-            .execute()
-            .use { it.body?.string().orEmpty() }
-        val list = if (provider == 0) {
-            body.lines().map(String::trim)
-        } else {
-            JSONObject(body).getJSONArray("addresses").let { array ->
-                List(array.length()) { index -> array.getString(index) }
+        fun get(url: String): String =
+            client.newCall(okhttp3.Request.Builder().url(url).build())
+                .execute()
+                .use { it.body?.string().orEmpty() }
+
+        val v4 = mutableListOf<String>()
+        val v6 = mutableListOf<String>()
+        if (provider == 0) {
+            v4 += get("https://www.cloudflare.com/ips-v4").lines().map(String::trim)
+            if (includeV6) {
+                runCatching { v6 += get("https://www.cloudflare.com/ips-v6").lines().map(String::trim) }
             }
+        } else {
+            val json = JSONObject(get("https://api.fastly.com/public-ip-list"))
+            json.optJSONArray("addresses")?.let { a -> for (i in 0 until a.length()) v4 += a.getString(i) }
+            if (includeV6) {
+                json.optJSONArray("ipv6_addresses")?.let { a -> for (i in 0 until a.length()) v6 += a.getString(i) }
+            }
+            v4 += FASTLY_EXTRA_RANGES
         }
-        list.filter { Regex("\\d+\\.\\d+\\.\\d+\\.\\d+/\\d+").matches(it) }
-            .ifEmpty { fallback }
+        val live = v4.filter { V4_CIDR.matches(it) } + v6.filter { V6_CIDR.matches(it) }
+        if (live.none { V4_CIDR.matches(it) }) fallback else live.distinct()
     } catch (_: Exception) {
         fallback
     }
@@ -147,11 +220,12 @@ suspend fun scan(
     provider: Int,
     port: Int,
     perRange: Int,
+    includeV6: Boolean = false,
     status: (String) -> Unit
 ): List<Result> = kotlinx.coroutines.coroutineScope {
     status("Loading ranges")
     val ranges = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        liveRanges(provider)
+        liveRanges(provider, includeV6)
     }
     val ips = ranges.flatMap { randomIps(it, perRange) }.distinct()
     val done = AtomicInteger(0)
@@ -276,12 +350,12 @@ fun configForIp(raw: String, ip: String): String {
                     add("allowInsecure=1")
                 }
             }.joinToString("&")
-            "${parsed.scheme}://$user@$ip:${parsed.port}?$query"
+            "${parsed.scheme}://$user@${hostForUrl(ip)}:${parsed.port}?$query"
         }
         "ss", "shadowsocks" -> {
             val method = Uri.encode(parsed.method.orEmpty())
             val password = Uri.encode(parsed.password.orEmpty())
-            "ss://$method:$password@$ip:${parsed.port}"
+            "ss://$method:$password@${hostForUrl(ip)}:${parsed.port}"
         }
         else -> raw
     }
@@ -316,5 +390,6 @@ val SNI_LIST = listOf(
     "www.nikon.com", "www.xiaomi.com", "www.huawei.com", "www.oneplus.com", "www.garmin.com",
     "www.synology.com", "www.qnap.com", "www.tp-link.com", "www.netgear.com", "www.mikrotik.com",
     "www.seagate.com", "www.westerndigital.com", "www.kingston.com", "www.corsair.com", "www.razer.com",
-    "www.msi.com", "www.gigabyte.com"
+    "www.msi.com", "www.gigabyte.com",
+    "www.lg.com", "www.hyundai.com", "www.audi.com", "www.porsche.com", "www.acer.com", "www.sap.com", "www.redhat.com", "www.suse.com", "www.archlinux.org", "fedoraproject.org", "www.mongodb.com", "www.elastic.co", "www.nginx.com", "www.apache.org", "www.php.net", "www.rust-lang.org", "go.dev", "kotlinlang.org", "www.typescriptlang.org", "react.dev", "vuejs.org", "developers.cloudflare.com", "developer.fastly.com", "www.vimeo.com", "soundcloud.com", "www.tumblr.com", "www.bing.com", "www.yahoo.com", "duckduckgo.com", "www.bbc.co.uk", "www.dw.com", "www.aljazeera.com", "www.npr.org", "www.washingtonpost.com", "www.economist.com", "www.zdnet.com", "www.cnet.com", "www.engadget.com", "arstechnica.com", "www.gsmarena.com", "www.kaspersky.com", "www.mcafee.com", "www.avast.com", "www.bitdefender.com", "www.nordvpn.com", "www.proton.me"
 )
