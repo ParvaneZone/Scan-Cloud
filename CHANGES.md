@@ -1,6 +1,6 @@
 ## Unreleased
 
-- New "IP Test" tab: enter an IP or domain and get details, ICMP/TCP ping, TCP port status and an HTTP/HTTPS check. Includes a separate card showing your own IP with a re-check button. SVG icons only.
+- New "IP Test" tab: IPv4 and IPv6 support, your own addresses with a re-check button, ping/TCP results from many countries, details, local ICMP/TCP ping, TCP port status and an HTTP/HTTPS check. SVG icons only.
 
 # Scan-Cloud Xray integration changes
 

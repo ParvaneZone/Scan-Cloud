@@ -5,12 +5,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.Inet4Address
+import java.net.Inet6Address
 import java.net.InetAddress
+import java.net.URLEncoder
 import java.security.SecureRandom
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
@@ -101,10 +107,22 @@ fun fetchIpInfo(ip: String?): IpInfo? {
     }
 }
 
-fun fetchMyIp(): IpInfo? {
-    fetchIpInfo(null)?.let { return it }
-    val plain = httpGetText("https://api.ipify.org")?.trim()
-    return if (!plain.isNullOrBlank() && plain.length < 46) IpInfo(plain) else null
+private val V4_REGEX = Regex("^\\d{1,3}(\\.\\d{1,3}){3}$")
+
+private fun cleanIp(text: String?, v6: Boolean): String? {
+    val ip = text?.trim() ?: return null
+    return if (v6) {
+        ip.takeIf { it.contains(':') && it.length < 46 && !it.contains('<') }
+    } else {
+        ip.takeIf { V4_REGEX.matches(it) }
+    }
+}
+
+/** Own public address of one family; null when that family has no connectivity. */
+fun fetchOwnIp(v6: Boolean): IpInfo? {
+    val host = if (v6) "api6.ipify.org" else "api.ipify.org"
+    val ip = cleanIp(httpGetText("https://$host"), v6) ?: return null
+    return fetchIpInfo(ip) ?: IpInfo(ip)
 }
 
 fun parseTarget(raw: String): String {
@@ -118,10 +136,17 @@ fun parseTarget(raw: String): String {
     return s
 }
 
-fun resolveTarget(host: String): String? = try {
-    if (host.isBlank()) null else InetAddress.getByName(host).hostAddress
+/** Returns the first IPv4 and the first IPv6 address of a host (either may be null). */
+fun resolveTargets(host: String): Pair<String?, String?> = try {
+    if (host.isBlank()) {
+        null to null
+    } else {
+        val all = InetAddress.getAllByName(host)
+        all.firstOrNull { it is Inet4Address }?.hostAddress to
+            all.firstOrNull { it is Inet6Address }?.hostAddress?.substringBefore('%')
+    }
 } catch (_: Exception) {
-    null
+    null to null
 }
 
 suspend fun reverseDns(ip: String): String? {
@@ -228,4 +253,117 @@ fun probeHttp(ip: String, https: Boolean): HttpProbe {
     } catch (e: Exception) {
         HttpProbe(https, null, null, null, null, null, null, e.javaClass.simpleName)
     }
+}
+
+data class GlobalNode(
+    val id: String,
+    val cc: String,
+    val country: String,
+    val city: String,
+    val done: Boolean,
+    val sent: Int = 0,
+    val received: Int = 0,
+    val minMs: Double? = null,
+    val avgMs: Double? = null,
+    val maxMs: Double? = null,
+    val error: String? = null
+)
+
+private const val GLOBAL_API = "https://check-host.net"
+
+private fun globalGet(path: String): JSONObject? = try {
+    val request = Request.Builder()
+        .url(GLOBAL_API + path)
+        .header("Accept", "application/json")
+        .build()
+    infoClient.newCall(request).execute().use { r ->
+        if (r.isSuccessful) r.body?.string()?.let { JSONObject(it) } else null
+    }
+} catch (_: Exception) {
+    null
+}
+
+private fun parseGlobalNode(base: GlobalNode, root: JSONObject, kind: String): GlobalNode {
+    if (root.isNull(base.id)) return base
+    val v: JSONArray = root.optJSONArray(base.id) ?: return base.copy(done = true, error = "-")
+    if (kind == "tcp") {
+        val o = v.optJSONObject(0)
+        val t = o?.optDouble("time", Double.NaN) ?: Double.NaN
+        return if (o != null && !t.isNaN()) {
+            base.copy(
+                done = true, sent = 1, received = 1,
+                minMs = t * 1000, avgMs = t * 1000, maxMs = t * 1000
+            )
+        } else {
+            base.copy(done = true, sent = 1, received = 0, error = o?.optString("error") ?: "-")
+        }
+    }
+    val inner = v.optJSONArray(0)
+        ?: return base.copy(done = true, sent = 1, received = 0, error = "-")
+    val times = mutableListOf<Double>()
+    for (i in 0 until inner.length()) {
+        val p = inner.optJSONArray(i) ?: continue
+        if (p.optString(0) == "OK") {
+            val t = p.optDouble(1, Double.NaN)
+            if (!t.isNaN()) times.add(t * 1000)
+        }
+    }
+    return base.copy(
+        done = true,
+        sent = inner.length(),
+        received = times.size,
+        minMs = times.minOrNull(),
+        avgMs = if (times.isEmpty()) null else times.average(),
+        maxMs = times.maxOrNull()
+    )
+}
+
+/**
+ * Runs a ping ("ping") or TCP ("tcp", target = host:port) test from servers in many countries.
+ * onUpdate receives the full, sorted node list every time results arrive.
+ * Returns false when the service could not be reached.
+ */
+suspend fun globalCheck(kind: String, target: String, onUpdate: (List<GlobalNode>) -> Unit): Boolean {
+    val enc = URLEncoder.encode(target, "UTF-8")
+    val start = withContext(Dispatchers.IO) {
+        globalGet("/check-$kind?host=$enc&max_nodes=40")
+    } ?: return false
+    val requestId = start.optString("request_id", "")
+    val nodesObj = start.optJSONObject("nodes")
+    if (requestId.isBlank() || nodesObj == null) return false
+
+    val meta = HashMap<String, JSONArray?>()
+    val keys = nodesObj.keys()
+    while (keys.hasNext()) {
+        val key = keys.next()
+        meta[key] = nodesObj.optJSONArray(key)
+    }
+
+    fun base(id: String): GlobalNode {
+        val m = meta[id]
+        return GlobalNode(
+            id = id,
+            cc = (m?.optString(0, "") ?: "").uppercase(),
+            country = m?.optString(1, "") ?: "",
+            city = m?.optString(2, "") ?: "",
+            done = false
+        )
+    }
+
+    fun ordered(list: List<GlobalNode>) =
+        list.sortedWith(compareBy({ it.country }, { it.city }, { it.id }))
+
+    var nodes = ordered(meta.keys.map { base(it) })
+    onUpdate(nodes)
+
+    repeat(15) {
+        delay(2000)
+        val root = withContext(Dispatchers.IO) { globalGet("/check-result/$requestId") }
+        if (root != null) {
+            nodes = ordered(meta.keys.map { parseGlobalNode(base(it), root, kind) })
+            onUpdate(nodes)
+            if (nodes.all { it.done }) return true
+        }
+    }
+    return nodes.any { it.done }
 }

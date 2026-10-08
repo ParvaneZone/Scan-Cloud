@@ -104,10 +104,10 @@ val S = mapOf(
     "tab_ipt" to ("IP Test" to "تست آیپی"),
     "ipt_title" to ("IP Test" to "تست آیپی"),
     "ipt_hint" to (
-        "Enter an IP or domain. Tests run from your phone, so results reflect your own network " +
-            "(unlike check-host.net, which tests from servers around the world)." to
-            "یک آیپی یا دامنه وارد کنید. تست‌ها از روی گوشی خودتان انجام می‌شود و نتیجه به " +
-                "شبکهٔ شما بستگی دارد (برخلاف check-host.net که از سرورهای نقاط مختلف دنیا تست می‌گیرد)."
+        "Enter an IP or domain. Details, ports and HTTP are tested from your phone; the location " +
+            "table is measured from servers in different countries." to
+            "یک آیپی یا دامنه وارد کنید. مشخصات، پورت‌ها و HTTP از روی گوشی شما تست می‌شود و " +
+                "جدول کشورها از سرورهایی در کشورهای مختلف اندازه‌گیری می‌شود."
     ),
     "ipt_my" to ("Your IP" to "آیپی شما"),
     "ipt_recheck" to ("Check again" to "بررسی دوباره"),
@@ -162,6 +162,18 @@ val S = mapOf(
     "ipt_cert_note" to (
         "The HTTPS certificate is not verified in this check." to
             "در این بررسی، گواهی HTTPS اعتبارسنجی نمی‌شود."
+    ),
+    "ipt_na" to ("Not available" to "در دسترس نیست"),
+    "ipt_no_v4" to ("No IPv4 address found" to "آیپی IPv4 پیدا نشد"),
+    "ipt_no_v6" to ("No IPv6 address found" to "آیپی IPv6 پیدا نشد"),
+    "ipt_global" to ("Test from locations" to "تست از کشورهای مختلف"),
+    "ipt_local_ping" to ("Ping from your phone" to "پینگ از گوشی شما"),
+    "ipt_g_tcp" to ("TCP port" to "پورت TCP"),
+    "ipt_g_ok" to ("Responded" to "پاسخ داده"),
+    "ipt_g_fail" to ("Failed" to "ناموفق"),
+    "ipt_g_err" to (
+        "Location test is unavailable right now." to
+            "تست از کشورهای مختلف الان در دسترس نیست."
     ),
     "check_update" to ("Check for updates" to "بررسی آپدیت"),
     "checking" to ("Checking" to "در حال بررسی"),
