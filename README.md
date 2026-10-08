@@ -46,6 +46,7 @@ Results depend on your operator, the time of day and your network conditions, so
 - ذخیرهٔ IPهای سالم در یک فایل متنی
 - تست با کانفیگ خودتان (vless / trojan با TLS و ws، grpc یا xhttp): IP اسکن‌شده جای آدرس کانفیگ می‌نشیند و فقط IPهایی که واقعاً جواب بدهند می‌مانند. خروجی را می‌توان به صورت فایل «همهٔ کانفیگ‌ها» ذخیره کرد.
 - اسکنر SNI / تارگت: پینگ، زمان پاسخ، سرعت، پشتیبانی از TLS 1.3 و h2
+- تست آیپی (شبیه check-host.net): مشخصات (کشور، ISP، ASN، Reverse DNS)، پینگ ICMP و TCP، وضعیت پورت‌های رایج و بررسی HTTP/HTTPS؛ به‌همراه نمایش آیپی خودتان با دکمهٔ بررسی دوباره
 - تم تیره و روشن، زبان فارسی و انگلیسی
 - بررسی آپدیت از همین صفحهٔ Releases (از منوی سه‌خط بالای صفحه)
 
@@ -59,6 +60,7 @@ Results depend on your operator, the time of day and your network conditions, so
 - Save the healthy IPs to a text file
 - Test with your own config (vless / trojan over TLS with ws, grpc or xhttp): each scanned IP is placed in your config and only the IPs that really respond are kept. The result can be saved as an "all configs" file.
 - SNI / target scanner: ping, response time, speed, TLS 1.3 and h2 support
+- IP Test (like check-host.net): details (country, ISP, ASN, reverse DNS), ICMP and TCP ping, common TCP ports and an HTTP/HTTPS check, plus your own IP with a re-check button
 - Dark and light themes, Persian and English interface
 - Update check from this repository's Releases page (from the three-line menu at the top)
 

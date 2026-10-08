@@ -72,3 +72,39 @@ val IconUsers by lazy {
 val IconDownload by lazy {
     svgIcon("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "M7 10l5 5 5-5", "M12 15V3")
 }
+
+val IconActivity by lazy {
+    svgIcon("M22 12h-4l-3 9L9 3l-3 9H2")
+}
+
+val IconSearch by lazy {
+    svgIcon("M11 3a8 8 0 1 0 0 16a8 8 0 0 0 0-16z", "M21 21l-4.35-4.35")
+}
+
+val IconPin by lazy {
+    svgIcon(
+        "M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z",
+        "M12 7a3 3 0 1 0 0 6a3 3 0 0 0 0-6z"
+    )
+}
+
+val IconCheck by lazy {
+    svgIcon("M20 6L9 17l-5-5")
+}
+
+val IconClose by lazy {
+    svgIcon("M18 6L6 18", "M6 6l12 12")
+}
+
+val IconServer by lazy {
+    svgIcon(
+        "M4 2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z",
+        "M4 14h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2z",
+        "M6 6h.01",
+        "M6 18h.01"
+    )
+}
+
+val IconPlug by lazy {
+    svgIcon("M9 2v6", "M15 2v6", "M6 8h12v4a6 6 0 0 1-12 0V8z", "M12 18v4")
+}

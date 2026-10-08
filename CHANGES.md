@@ -1,3 +1,7 @@
+## Unreleased
+
+- New "IP Test" tab: enter an IP or domain and get details, ICMP/TCP ping, TCP port status and an HTTP/HTTPS check. Includes a separate card showing your own IP with a re-check button. SVG icons only.
+
 # Scan-Cloud Xray integration changes
 
 This revision contains only the requested follow-up fixes to the Xray integration, project layout, DNS handling, release acquisition, and documentation.

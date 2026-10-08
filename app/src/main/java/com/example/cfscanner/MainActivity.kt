@@ -321,6 +321,7 @@ fun ScannerScreen(
                 listOf(
                     IconCloud to "tab_cf",
                     IconGlobe to "tab_sni",
+                    IconActivity to "tab_ipt",
                     IconInfo to "tab_about"
                 ).forEachIndexed { index, (icon, key) ->
                     NavigationBarItem(
@@ -338,7 +339,7 @@ fun ScannerScreen(
                 .padding(paddingValues)
                 .fillMaxSize()
         ) {
-            for (index in 0..2) {
+            for (index in 0..3) {
                 Box(
                     if (tab == index) {
                         Modifier.fillMaxSize()
@@ -351,6 +352,7 @@ fun ScannerScreen(
                     when (index) {
                         0 -> CfTab(fa)
                         1 -> SniTab(fa)
+                        2 -> IpTestTab(fa)
                         else -> AboutTab(fa)
                     }
                 }

@@ -101,6 +101,68 @@ val S = mapOf(
                 "برای پیشنهاد یا گزارش مشکل، با دکمهٔ زیر به سازنده " +
                 "پیام بدهید."
     ),
+    "tab_ipt" to ("IP Test" to "تست آیپی"),
+    "ipt_title" to ("IP Test" to "تست آیپی"),
+    "ipt_hint" to (
+        "Enter an IP or domain. Tests run from your phone, so results reflect your own network " +
+            "(unlike check-host.net, which tests from servers around the world)." to
+            "یک آیپی یا دامنه وارد کنید. تست‌ها از روی گوشی خودتان انجام می‌شود و نتیجه به " +
+                "شبکهٔ شما بستگی دارد (برخلاف check-host.net که از سرورهای نقاط مختلف دنیا تست می‌گیرد)."
+    ),
+    "ipt_my" to ("Your IP" to "آیپی شما"),
+    "ipt_recheck" to ("Check again" to "بررسی دوباره"),
+    "ipt_my_err" to (
+        "Could not detect your IP. Check your internet." to
+            "آیپی شما شناسایی نشد. اینترنت خود را چک کنید."
+    ),
+    "ipt_vpn_note" to (
+        "If a VPN or proxy is on, this shows its IP." to
+            "اگر VPN یا پروکسی روشن باشد، آیپی آن نمایش داده می‌شود."
+    ),
+    "ipt_use_mine" to ("Test my IP" to "تست آیپی من"),
+    "ipt_field" to ("IP or domain" to "آیپی یا دامنه"),
+    "ipt_run" to ("Run test" to "شروع تست"),
+    "ipt_bad" to ("Invalid IP or domain." to "آیپی یا دامنه نامعتبر است."),
+    "ipt_resolved" to ("Resolved to" to "تبدیل‌شده به"),
+    "ipt_info" to ("Information" to "مشخصات"),
+    "ipt_info_err" to (
+        "Could not fetch details (needs internet)." to
+            "دریافت مشخصات انجام نشد (نیاز به اینترنت)."
+    ),
+    "ipt_ping" to ("Ping" to "پینگ"),
+    "ipt_ports" to ("TCP ports" to "پورت‌های TCP"),
+    "ipt_http" to ("HTTP check" to "بررسی HTTP"),
+    "ipt_ip" to ("IP" to "آیپی"),
+    "ipt_type" to ("Type" to "نوع"),
+    "ipt_country" to ("Country" to "کشور"),
+    "ipt_region" to ("Region" to "استان / منطقه"),
+    "ipt_city" to ("City" to "شهر"),
+    "ipt_isp" to ("ISP" to "ارائه‌دهنده"),
+    "ipt_org" to ("Organization" to "سازمان"),
+    "ipt_asn" to ("ASN" to "ASN"),
+    "ipt_tz" to ("Time zone" to "منطقهٔ زمانی"),
+    "ipt_rdns" to ("Reverse DNS" to "Reverse DNS"),
+    "ipt_icmp" to ("ICMP ping" to "پینگ ICMP"),
+    "ipt_tcpping" to ("TCP ping" to "پینگ TCP"),
+    "ipt_noicmp" to (
+        "ICMP is unavailable on this device" to "ICMP روی این دستگاه در دسترس نیست"
+    ),
+    "ipt_sent" to ("Sent / received" to "ارسال / دریافت"),
+    "ipt_loss" to ("Packet loss" to "از دست رفتن بسته"),
+    "ipt_latency" to ("Min / avg / max" to "کمینه / میانگین / بیشینه"),
+    "ipt_open" to ("Open" to "باز"),
+    "ipt_closed" to ("Closed / filtered" to "بسته / فیلتر"),
+    "ipt_open_count" to ("Open ports" to "پورت‌های باز"),
+    "ipt_status" to ("Status" to "وضعیت"),
+    "ipt_server" to ("Server" to "سرور"),
+    "ipt_redirect" to ("Redirect" to "ریدایرکت"),
+    "ipt_proto" to ("Protocol" to "پروتکل"),
+    "ipt_time" to ("Response time" to "زمان پاسخ"),
+    "ipt_fail" to ("No response" to "بدون پاسخ"),
+    "ipt_cert_note" to (
+        "The HTTPS certificate is not verified in this check." to
+            "در این بررسی، گواهی HTTPS اعتبارسنجی نمی‌شود."
+    ),
     "check_update" to ("Check for updates" to "بررسی آپدیت"),
     "checking" to ("Checking" to "در حال بررسی"),
     "upd_none" to ("You have the latest version." to "شما آخرین نسخه را دارید."),
